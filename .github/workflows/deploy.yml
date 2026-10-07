@@ -1,0 +1,34 @@
+name: Deploy to Cloud Run
+# Manual trigger only. Requires the repository variables/secrets listed in docs/DEPLOY.md.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  REGION: ${{ vars.GCP_REGION }}
+  IMAGE: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT }}/tracepilot/backend
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - run: gcloud auth configure-docker ${{ vars.GCP_REGION }}-docker.pkg.dev --quiet
+      - run: docker build -t $IMAGE:${{ github.sha }} .
+      - run: docker push $IMAGE:${{ github.sha }}
+      - run: |
+          gcloud run deploy tracepilot-api \
+            --image $IMAGE:${{ github.sha }} \
+            --region $REGION \
+            --allow-unauthenticated \
+            --port 8000 \
+            --set-env-vars CORS_ORIGINS=${{ vars.FRONTEND_ORIGIN }} \
+            --set-secrets TRACEPILOT_DB=tracepilot-db-url:latest,TRACEPILOT_API_KEYS=tracepilot-api-keys:latest,REDIS_URL=tracepilot-redis-url:latest,ANTHROPIC_API_KEY=anthropic-api-key:latest
