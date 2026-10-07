@@ -57,11 +57,9 @@ class ApprovalIn(BaseModel):
 
 
 def _default_llm():
-    if not os.getenv("ANTHROPIC_API_KEY"):
-        return None
-    from backend.agents.llm import AnthropicLLM
+    from backend.agents.llm import make_llm
 
-    return AnthropicLLM()
+    return make_llm()
 
 
 def create_app(db_url: str | None = None, llm=None, history=None, api_keys: str | None = None, rate_limit: int | None = None) -> FastAPI:

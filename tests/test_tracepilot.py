@@ -147,3 +147,37 @@ def test_rate_limit_and_prometheus():
     assert codes == [201, 201, 429]
     text = c.get("/prom").text
     assert "tracepilot_investigations_total" in text and "tracepilot_tool_calls_total" in text
+
+
+# --- OpenAI-compatible (free model) provider ---
+import httpx
+
+from backend.agents.llm import OpenAICompatLLM, make_llm
+
+
+def test_openai_compat_llm_end_to_end(idx, monkeypatch):
+    s = make_scenario(1)
+    base, _ = run_investigation(ToolBox(s, idx), s.alert, s.exemplar_trace)
+    top = base.hypotheses[0]
+    reply = json.dumps({"summary": "x", "ranking": [{"cause": top.cause, "evidence_ids": top.evidence_ids[:1], "explanation": "free model says so"}]})
+    seen = {}
+
+    def handler(req: httpx.Request):
+        seen["url"], seen["auth"] = str(req.url), req.headers.get("authorization")
+        return httpx.Response(200, json={"choices": [{"message": {"content": reply}}], "usage": {"prompt_tokens": 10, "completion_tokens": 5}})
+
+    llm = OpenAICompatLLM("http://llm.test/v1/", "free-model", "k", httpx.Client(transport=httpx.MockTransport(handler)))
+    r, _ = run_investigation(ToolBox(s, idx), s.alert, s.exemplar_trace, llm)
+    assert seen == {"url": "http://llm.test/v1/chat/completions", "auth": "Bearer k"}
+    assert r.llm == {"used": True, "model": "free-model", "input_tokens": 10, "output_tokens": 5, "cost_usd": 0.0}
+    assert r.hypotheses[0].explanation == "free model says so"
+
+
+def test_make_llm_selection(monkeypatch):
+    for k in ("LLM_BASE_URL", "ANTHROPIC_API_KEY", "LLM_MODEL"):
+        monkeypatch.delenv(k, raising=False)
+    assert make_llm() is None
+    monkeypatch.setenv("LLM_BASE_URL", "http://localhost:11434/v1")
+    monkeypatch.setenv("LLM_MODEL", "")
+    m = make_llm()
+    assert isinstance(m, OpenAICompatLLM) and m.model == "llama3.1"
